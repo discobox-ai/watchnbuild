@@ -130,6 +130,12 @@ type RunConfig struct {
 	// Grace is how long the process gets after StopSignal before its
 	// process group is SIGKILLed. 0 force-kills immediately. Default: 10s.
 	Grace Duration `yaml:"grace"`
+	// AllowExit treats a clean (status 0) exit of the run command as a
+	// legitimate end rather than a failure. Off by default: a run command
+	// is normally a server, and a server that exits — even politely — has
+	// stopped serving, which is the state retries exist to recover from.
+	// Turn it on for a run command that is meant to finish.
+	AllowExit bool `yaml:"allow_exit"`
 }
 
 // RetryConfig controls automatic re-running of the build after a failure,

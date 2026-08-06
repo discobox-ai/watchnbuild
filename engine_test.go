@@ -114,6 +114,75 @@ func TestEngineRetriesCrashedProcess(t *testing.T) {
 	}
 }
 
+func TestEngineRetriesCleanExit(t *testing.T) {
+	var buf syncBuffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	cfg := &Config{
+		Build: BuildConfig{Command: "true", Grace: Duration(time.Second)},
+		Run:   RunConfig{Command: "true", StopSignal: "TERM", Grace: Duration(time.Second)},
+		Retry: RetryConfig{Initial: Duration(50 * time.Millisecond), Max: Duration(50 * time.Millisecond)},
+	}
+	batches := make(chan []string)
+	signals := make(chan os.Signal, 1)
+	exited := make(chan int, 1)
+	go func() { exited <- NewEngine(cfg, batches, signals).Run() }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for strings.Count(buf.String(), "exited cleanly but is not running") < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("cleanly exited process was not retried; log:\n%s", buf.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	signals <- os.Interrupt
+	select {
+	case <-exited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("engine did not exit after signal")
+	}
+}
+
+// With run.allow_exit, a clean exit ends the pipeline instead of retrying it.
+func TestEngineAllowExit(t *testing.T) {
+	var buf syncBuffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	cfg := &Config{
+		Build: BuildConfig{Command: "true", Grace: Duration(time.Second)},
+		Run:   RunConfig{Command: "true", StopSignal: "TERM", Grace: Duration(time.Second), AllowExit: true},
+		Retry: RetryConfig{Initial: Duration(50 * time.Millisecond), Max: Duration(50 * time.Millisecond)},
+	}
+	batches := make(chan []string)
+	signals := make(chan os.Signal, 1)
+	exited := make(chan int, 1)
+	go func() { exited <- NewEngine(cfg, batches, signals).Run() }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(buf.String(), "exited cleanly (waiting for next change)") {
+		if time.Now().After(deadline) {
+			t.Fatalf("clean exit was not reported as done; log:\n%s", buf.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Give a retry, were one scheduled, several delays to fire.
+	time.Sleep(300 * time.Millisecond)
+	if strings.Contains(buf.String(), "retrying in") {
+		t.Fatalf("allow_exit still scheduled a retry; log:\n%s", buf.String())
+	}
+
+	signals <- os.Interrupt
+	select {
+	case <-exited:
+	case <-time.After(10 * time.Second):
+		t.Fatal("engine did not exit after signal")
+	}
+}
+
 func TestEngineRetryDisabled(t *testing.T) {
 	var buf syncBuffer
 	log.SetOutput(&buf)

@@ -157,13 +157,22 @@ func (e *Engine) Run() int {
 			failures = 0
 
 		case <-done(run):
-			if err := run.ExitError(); err != nil {
+			err := run.ExitError()
+			switch {
+			case err == nil && e.cfg.Run.AllowExit:
+				log.Printf("[wnb] process exited cleanly (waiting for next change)")
+			case err == nil:
+				// A server that exited has stopped serving, however
+				// politely it did so — same transient case a crash is,
+				// and the same fix. run.allow_exit opts out.
+				failures++
+				log.Printf("[wnb] process exited cleanly but is not running (set run.allow_exit to treat this as done)")
+				retry = e.scheduleRetry(failures)
+			default:
 				// A crash is the transient case retries exist for.
 				failures++
 				log.Printf("[wnb] process exited: %v", err)
 				retry = e.scheduleRetry(failures)
-			} else {
-				log.Printf("[wnb] process exited cleanly (waiting for next change)")
 			}
 			run = nil
 

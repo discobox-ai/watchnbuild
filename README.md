@@ -60,6 +60,8 @@ run:                        # optional: omit for a watch-and-build-only loop
   command: ./bin/app serve  # restarted after every successful build
   stop_signal: TERM         # TERM, INT, HUP, USR1, USR2, QUIT, KILL
   grace: 10s                # after stop_signal, before SIGKILL (0 = kill now)
+  allow_exit: false         # true: a clean exit means "done" instead of
+                            # "stopped serving" and is not retried
 
 retry:
   enabled: true             # retry after a failure without waiting for a
@@ -96,9 +98,15 @@ Triggers alone aren't enough: the fix may land in a file that doesn't match
 your watch patterns, and a start failure is often transient (the old port is
 still held, a database isn't up yet). A file change always supersedes a
 pending retry and builds immediately, but does not reset the delay — only
-success does. A run process that exits *cleanly* is treated as done, not
-failed, and is not retried. Set `retry.enabled: false` to go back to
-change-triggered builds only.
+success does. Set `retry.enabled: false` to go back to change-triggered
+builds only.
+
+A run process that exits with status 0 counts as a failure too: a server
+that exits has stopped serving, and it makes no difference to you whether it
+crashed or returned cleanly. Set `run.allow_exit: true` for a run command
+that is genuinely meant to finish (a one-shot task, a test run) — then a
+clean exit is "done" and `wnb` just waits for the next change, while a
+non-zero exit is still retried.
 
 ### What triggers a build
 
