@@ -1,4 +1,4 @@
-module github.com/ibuildthecloud/watchnbuild
+module github.com/discobox-ai/watchnbuild
 
 go 1.26.0
 

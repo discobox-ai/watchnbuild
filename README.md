@@ -33,7 +33,7 @@ one schema.
 ### As a Go tool dependency
 
 ```
-go get -tool github.com/ibuildthecloud/watchnbuild
+go get -tool github.com/discobox-ai/watchnbuild
 go tool watchnbuild
 ```
 
