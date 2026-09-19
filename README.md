@@ -26,9 +26,24 @@ to Go.
 watchnbuild [-config path]
 ```
 
-With no flag, the first of `.wnb.yaml`, `.wnb.yml`, `.wnb.json` in the
+With no `-config`, the first of `.wnb.yaml`, `.wnb.yml`, `.wnb.json` in the
 working directory is used. YAML is a superset of JSON, so both formats share
 one schema.
+
+Nothing in the config is required. With no config file at all, `wnb`
+builds and runs the Go app in the working directory (`go build -o
+bin/app.exe .`, then `./bin/app.exe` — `.exe` on every platform, since
+Windows needs it and nothing else minds), and writes a sample `.wnb.yaml`
+listing every option, all commented out with their defaults and examples,
+for you to edit.
+
+`wnb` holds an exclusive lock on its config file while it runs, so a second
+`wnb` on the same config exits immediately. (The lock belongs to the file,
+not its name: after an editor saves by renaming a new file over the config,
+a newly started `wnb` locks the new one.) That also stops a run command
+that is itself `wnb` — building this repo with the defaults does exactly
+that — from launching itself forever: the nested one fails, and the first
+reports it as a failed run and backs off.
 
 ### As a Go tool dependency
 
@@ -53,11 +68,12 @@ debounce: 300ms             # coalesce window; opens at the first event and
                             # fires once it elapses (fixed, not sliding)
 
 build:
-  command: go build -o bin/app .   # run through $SHELL; required
+  command: go build -o bin/app.exe .  # run through $SHELL (this is the default)
   grace: 2s                 # TERM → grace → KILL when cancelling a stale build
 
 run:                        # optional: omit for a watch-and-build-only loop
-  command: ./bin/app serve  # restarted after every successful build
+  command: ./bin/app.exe    # restarted after every successful build; the
+                            # default only when build.command is unset too
   stop_signal: TERM         # TERM, INT, HUP, USR1, USR2, QUIT, KILL
   grace: 10s                # after stop_signal, before SIGKILL (0 = kill now)
   allow_exit: false         # true: a clean exit means "done" instead of
@@ -107,6 +123,37 @@ crashed or returned cleanly. Set `run.allow_exit: true` for a run command
 that is genuinely meant to finish (a one-shot task, a test run) — then a
 clean exit is "done" and `wnb` just waits for the next change, while a
 non-zero exit is still retried.
+
+### Failure reports
+
+When a build fails, or the run process can't start or exits, `wnb` writes
+`wnb-build-failed.txt` or `wnb-run-failed.txt` to the working directory:
+the command, what triggered it, how long it ran, its exit status, and the
+last 1000 lines of its combined stdout/stderr (with a note if earlier lines
+were dropped). The point is that someone who can't see `wnb`'s terminal —
+typically a coding agent — can find out the build is broken, and why, by
+looking for a file.
+
+The reports clean up after themselves: the build report is removed when a
+build succeeds, and the run report once a restarted process has stayed up
+for 1 second (or exits cleanly under `run.allow_exit`). They never trigger a
+build, whatever the watch config says. Add them to your `.gitignore`:
+
+```
+wnb-*-failed.txt
+```
+
+Capturing output means commands write to pipes rather than your terminal,
+and programs notice:
+
+- tools that only color output on a TTY print without color;
+- C stdio and Python switch stdout to block buffering, so their logs arrive
+  in chunks rather than line by line, and whatever is still buffered when a
+  process is killed after its grace period is lost — from the terminal and
+  the report alike. Turn it off in the program, or with `PYTHONUNBUFFERED=1`
+  or `stdbuf -oL` in the command;
+- stdout and stderr are separate pipes, so lines from one can appear before
+  or after lines from the other in a different order than they were written.
 
 ### What triggers a build
 

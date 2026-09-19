@@ -28,7 +28,25 @@ func main() {
 		return
 	}
 
-	cfg, err := LoadConfig(*configPath)
+	// There is always a config file: with none, wnb writes the sample
+	// (YAML, not JSON, since it is mostly comments) and runs it, which
+	// gives the defaults it documents. The file is also what the lock is
+	// taken on.
+	path := *configPath
+	if path == "" {
+		path = FindConfig()
+	}
+	if path == "" {
+		path = ".wnb.yaml"
+		if err := writeSampleConfig(path); err != nil {
+			log.Fatalf("[wnb] no config file found, and cannot write a sample: %v", err)
+		}
+		log.Printf("[wnb] no config file found; wrote %s with every option commented out, running with defaults", path)
+	}
+	if err := lockConfig(path); err != nil {
+		log.Fatalf("[wnb] %v", err)
+	}
+	cfg, err := LoadConfig(path)
 	if err != nil {
 		log.Fatalf("[wnb] %v", err)
 	}

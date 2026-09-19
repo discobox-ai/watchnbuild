@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -59,7 +60,7 @@ func TestEngineRetriesFailedBuild(t *testing.T) {
 	batches := make(chan []string)
 	signals := make(chan os.Signal, 1)
 	exited := make(chan int, 1)
-	go func() { exited <- NewEngine(cfg, batches, signals).Run() }()
+	go func() { exited <- newTestEngine(t, cfg, batches, signals).Run() }()
 
 	// No file change is ever sent: the rebuilds must come from the retry
 	// timer alone, and the delay must grow with consecutive failures.
@@ -96,7 +97,7 @@ func TestEngineRetriesCrashedProcess(t *testing.T) {
 	batches := make(chan []string)
 	signals := make(chan os.Signal, 1)
 	exited := make(chan int, 1)
-	go func() { exited <- NewEngine(cfg, batches, signals).Run() }()
+	go func() { exited <- newTestEngine(t, cfg, batches, signals).Run() }()
 
 	deadline := time.Now().Add(5 * time.Second)
 	for strings.Count(buf.String(), "process exited:") < 2 {
@@ -127,7 +128,7 @@ func TestEngineRetriesCleanExit(t *testing.T) {
 	batches := make(chan []string)
 	signals := make(chan os.Signal, 1)
 	exited := make(chan int, 1)
-	go func() { exited <- NewEngine(cfg, batches, signals).Run() }()
+	go func() { exited <- newTestEngine(t, cfg, batches, signals).Run() }()
 
 	deadline := time.Now().Add(5 * time.Second)
 	for strings.Count(buf.String(), "exited cleanly but is not running") < 2 {
@@ -159,7 +160,7 @@ func TestEngineAllowExit(t *testing.T) {
 	batches := make(chan []string)
 	signals := make(chan os.Signal, 1)
 	exited := make(chan int, 1)
-	go func() { exited <- NewEngine(cfg, batches, signals).Run() }()
+	go func() { exited <- newTestEngine(t, cfg, batches, signals).Run() }()
 
 	deadline := time.Now().Add(5 * time.Second)
 	for !strings.Contains(buf.String(), "exited cleanly (waiting for next change)") {
@@ -197,7 +198,7 @@ func TestEngineRetryDisabled(t *testing.T) {
 	batches := make(chan []string)
 	signals := make(chan os.Signal, 1)
 	exited := make(chan int, 1)
-	go func() { exited <- NewEngine(cfg, batches, signals).Run() }()
+	go func() { exited <- newTestEngine(t, cfg, batches, signals).Run() }()
 
 	time.Sleep(300 * time.Millisecond)
 	if n := strings.Count(buf.String(), "build failed"); n != 1 {
@@ -232,7 +233,7 @@ func TestSecondSignalKillsDuringGrace(t *testing.T) {
 	batches := make(chan []string)
 	signals := make(chan os.Signal, 2)
 	exited := make(chan int, 1)
-	go func() { exited <- NewEngine(cfg, batches, signals).Run() }()
+	go func() { exited <- newTestEngine(t, cfg, batches, signals).Run() }()
 
 	waitForLog(t, &buf, "starting process")
 
@@ -273,7 +274,7 @@ func TestSingleSignalExitsCleanlyWithZero(t *testing.T) {
 	batches := make(chan []string)
 	signals := make(chan os.Signal, 2)
 	exited := make(chan int, 1)
-	go func() { exited <- NewEngine(cfg, batches, signals).Run() }()
+	go func() { exited <- newTestEngine(t, cfg, batches, signals).Run() }()
 
 	waitForLog(t, &buf, "starting process")
 	signals <- os.Interrupt
@@ -302,7 +303,7 @@ func TestSignalDuringRestartGrace(t *testing.T) {
 	batches := make(chan []string)
 	signals := make(chan os.Signal, 2)
 	exited := make(chan int, 1)
-	go func() { exited <- NewEngine(cfg, batches, signals).Run() }()
+	go func() { exited <- newTestEngine(t, cfg, batches, signals).Run() }()
 
 	waitForLog(t, &buf, "starting process")
 	batches <- []string{"main.go"} // rebuild -> stop the stubborn process
@@ -379,7 +380,7 @@ func TestEngineBacksOffAfterRepeatedCancels(t *testing.T) {
 	batches := make(chan []string)
 	signals := make(chan os.Signal, 1)
 	exited := make(chan int, 1)
-	go func() { exited <- NewEngine(cfg, batches, signals).Run() }()
+	go func() { exited <- newTestEngine(t, cfg, batches, signals).Run() }()
 
 	// Each batch lands while the (fresh) 0.4s build is still running, so
 	// every one is a cancel; the third must trip the backoff warning.
@@ -405,4 +406,122 @@ func TestEngineBacksOffAfterRepeatedCancels(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("engine did not exit after signal")
 	}
+}
+
+// newTestEngine is NewEngine with failure reports going to a temp dir rather
+// than the package directory.
+func newTestEngine(t *testing.T, cfg *Config, batches <-chan []string, signals <-chan os.Signal) *Engine {
+	t.Helper()
+	e := NewEngine(cfg, batches, signals)
+	e.reportDir = t.TempDir()
+	return e
+}
+
+func waitForFile(t *testing.T, path string, exists bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		_, err := os.Stat(path)
+		if (err == nil) == exists {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s exists = %v, want %v", path, err == nil, exists)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func TestBuildFailureReportWrittenAndCleared(t *testing.T) {
+	var buf syncBuffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	fixed := filepath.Join(t.TempDir(), "fixed")
+	off := false
+	cfg := &Config{
+		Build: BuildConfig{Command: "test -f " + fixed + " || { echo compiling; echo 'main.go:3: syntax error' >&2; exit 2; }", Grace: Duration(time.Second)},
+		Run:   RunConfig{StopSignal: "TERM", Grace: Duration(time.Second)},
+		Retry: RetryConfig{Enabled: &off},
+	}
+	batches := make(chan []string)
+	signals := make(chan os.Signal, 1)
+	exited := make(chan int, 1)
+	e := newTestEngine(t, cfg, batches, signals)
+	go func() { exited <- e.Run() }()
+
+	report := filepath.Join(e.reportDir, buildReportFile)
+	waitForFile(t, report, true)
+	got := readFile(t, report)
+	for _, want := range []string{"build failed", "exit status 2", "Trigger:  startup", "compiling", "main.go:3: syntax error"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report missing %q:\n%s", want, got)
+		}
+	}
+
+	if err := os.WriteFile(fixed, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	batches <- []string{"main.go"}
+	waitForFile(t, report, false)
+
+	signals <- os.Interrupt
+	<-exited
+}
+
+func TestRunFailureReportWrittenAndClearedWhenHealthy(t *testing.T) {
+	var buf syncBuffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	fixed := filepath.Join(t.TempDir(), "fixed")
+	off := false
+	cfg := &Config{
+		Build: BuildConfig{Command: "true", Grace: Duration(time.Second)},
+		Run:   RunConfig{Command: "test -f " + fixed + " || { echo 'panic: boom'; exit 3; }; sleep 60", StopSignal: "TERM", Grace: Duration(time.Second)},
+		Retry: RetryConfig{Enabled: &off},
+	}
+	batches := make(chan []string)
+	signals := make(chan os.Signal, 1)
+	exited := make(chan int, 1)
+	e := newTestEngine(t, cfg, batches, signals)
+	go func() { exited <- e.Run() }()
+
+	report := filepath.Join(e.reportDir, runReportFile)
+	waitForFile(t, report, true)
+	got := readFile(t, report)
+	for _, want := range []string{"run failed", "exit status 3", "panic: boom"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("report missing %q:\n%s", want, got)
+		}
+	}
+
+	if err := os.WriteFile(fixed, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	batches <- []string{"main.go"}
+	deadline := time.Now().Add(10 * time.Second)
+	for strings.Count(buf.String(), "starting process") < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("process was not restarted; log:\n%s", buf.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// Started, but not yet up for the grace period: the report stays.
+	if _, err := os.Stat(report); err != nil {
+		t.Fatalf("report removed before the process proved healthy: %v", err)
+	}
+	waitForFile(t, report, false)
+
+	signals <- os.Interrupt
+	<-exited
 }

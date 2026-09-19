@@ -152,10 +152,25 @@ build:
 	}
 }
 
-func TestMissingBuildCommandRejected(t *testing.T) {
-	path := writeConfig(t, ".wnb.yaml", `run: {command: ./app}`)
-	if _, err := LoadConfig(path); err == nil {
-		t.Fatal("expected error for missing build.command")
+func TestDefaultCommands(t *testing.T) {
+	cases := []struct {
+		yaml, build, run string
+	}{
+		// Nothing set: build and run the Go app.
+		{`{}`, DefaultBuildCommand, DefaultRunCommand},
+		// A run command alone keeps the default build.
+		{`run: {command: ./app serve}`, DefaultBuildCommand, "./app serve"},
+		// A custom build with no run is watch-and-build only.
+		{`build: {command: make}`, "make", ""},
+	}
+	for _, c := range cases {
+		cfg, err := LoadConfig(writeConfig(t, ".wnb.yaml", c.yaml))
+		if err != nil {
+			t.Fatalf("%s: %v", c.yaml, err)
+		}
+		if cfg.Build.Command != c.build || cfg.Run.Command != c.run {
+			t.Errorf("%s: commands = %q, %q; want %q, %q", c.yaml, cfg.Build.Command, cfg.Run.Command, c.build, c.run)
+		}
 	}
 }
 
@@ -201,6 +216,11 @@ func TestMatchesAllWhenNoExtensions(t *testing.T) {
 	if cfg.Matches("noisy.log") {
 		t.Fatal("exclude should still apply")
 	}
+	for _, name := range []string{buildReportFile, runReportFile, reportTemp(buildReportFile)} {
+		if cfg.Matches(name) {
+			t.Errorf("failure report %s must never trigger a build", name)
+		}
+	}
 }
 
 func TestExcludesDir(t *testing.T) {
@@ -219,5 +239,43 @@ func TestExcludesDir(t *testing.T) {
 		if got := cfg.ExcludesDir(c.path); got != c.want {
 			t.Errorf("ExcludesDir(%q) = %v, want %v", c.path, got, c.want)
 		}
+	}
+}
+
+func TestSampleConfig(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := writeSampleConfig(".wnb.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSampleConfig(".wnb.yaml"); err == nil {
+		t.Fatal("overwrote an existing config")
+	}
+
+	// Untouched, the sample loads as all defaults.
+	cfg, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("untouched sample does not load: %v", err)
+	}
+	if cfg.Build.Command != DefaultBuildCommand || cfg.Run.Command != DefaultRunCommand {
+		t.Errorf("untouched sample commands = %q, %q", cfg.Build.Command, cfg.Run.Command)
+	}
+
+	// Every option line uncommented must be a valid config, so the
+	// sample can't drift from the real field names.
+	var lines []string
+	for _, l := range strings.Split(sampleConfig, "\n") {
+		body := strings.TrimLeft(l, " ")
+		if strings.HasPrefix(body, "#") && !strings.HasPrefix(body, "##") {
+			l = l[:len(l)-len(body)] + body[1:]
+		}
+		lines = append(lines, l)
+	}
+	path := writeConfig(t, "full.yaml", strings.Join(lines, "\n"))
+	cfg, err = LoadConfig(path)
+	if err != nil {
+		t.Fatalf("uncommented sample does not load: %v", err)
+	}
+	if cfg.Build.Command == "" || cfg.Run.Command == "" || cfg.Retry.Max.D() != 10*time.Minute {
+		t.Errorf("uncommented sample loaded as %+v", cfg)
 	}
 }

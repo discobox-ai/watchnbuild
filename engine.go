@@ -27,6 +27,12 @@ type Engine struct {
 	// by stopProcs, on the engine goroutine.
 	aborted os.Signal
 	forced  bool
+
+	// reportDir is where failure reports are written (the working
+	// directory); buildTrigger is what started the current build, for
+	// its report.
+	reportDir    string
+	buildTrigger string
 }
 
 // stopTarget is one process to stop, with the grace period configured for
@@ -44,7 +50,7 @@ func NewEngine(cfg *Config, batches <-chan []string, signals <-chan os.Signal) *
 		// validate() already rejected bad names; this is unreachable.
 		panic(err)
 	}
-	return &Engine{cfg: cfg, batches: batches, signals: signals, stopSignal: sig}
+	return &Engine{cfg: cfg, batches: batches, signals: signals, stopSignal: sig, reportDir: workDir}
 }
 
 // Backoff kicks in after this many consecutive builds are cancelled by new
@@ -68,6 +74,9 @@ func (e *Engine) Run() int {
 		// that re-runs the pipeline without waiting for a file change.
 		failures int
 		retry    <-chan time.Time
+		// Fires once the run process has stayed up long enough to
+		// count as healthy, clearing any previous run failure report.
+		runHealthy <-chan time.Time
 	)
 
 	build = e.startBuild([]string{"startup"})
@@ -140,12 +149,15 @@ func (e *Engine) Run() int {
 			if !finished.Success() {
 				failures++
 				log.Printf("[wnb] build failed (%v)%s", finished.ExitError(), keepNote(run))
+				e.reportBuild(finished.ExitError().Error(), finished)
 				retry = e.scheduleRetry(failures)
 				continue
 			}
 			log.Printf("[wnb] build succeeded")
+			clearReport(e.reportDir, buildReportFile)
 			var ok bool
 			run, ok = e.restartRun(run)
+			runHealthy = nil
 			if e.aborted != nil {
 				return e.shutdown(nil, run)
 			}
@@ -154,24 +166,35 @@ func (e *Engine) Run() int {
 				retry = e.scheduleRetry(failures)
 				continue
 			}
+			if run != nil {
+				runHealthy = time.After(runHealthyAfter)
+			}
 			failures = 0
 
+		case <-runHealthy:
+			runHealthy = nil
+			clearReport(e.reportDir, runReportFile)
+
 		case <-done(run):
+			runHealthy = nil
 			err := run.ExitError()
 			switch {
 			case err == nil && e.cfg.Run.AllowExit:
 				log.Printf("[wnb] process exited cleanly (waiting for next change)")
+				clearReport(e.reportDir, runReportFile)
 			case err == nil:
 				// A server that exited has stopped serving, however
 				// politely it did so — same transient case a crash is,
 				// and the same fix. run.allow_exit opts out.
 				failures++
 				log.Printf("[wnb] process exited cleanly but is not running (set run.allow_exit to treat this as done)")
+				e.reportRun("exited with status 0, but the run command is expected to keep running (set run.allow_exit to treat a clean exit as done)", run)
 				retry = e.scheduleRetry(failures)
 			default:
 				// A crash is the transient case retries exist for.
 				failures++
 				log.Printf("[wnb] process exited: %v", err)
+				e.reportRun(err.Error(), run)
 				retry = e.scheduleRetry(failures)
 			}
 			run = nil
@@ -194,14 +217,41 @@ func (e *Engine) startBuild(reasons []string) *Proc {
 			display[i] = "(event overflow)"
 		}
 	}
-	log.Printf("[wnb] building (%s)", strings.Join(display, ", "))
+	e.buildTrigger = strings.Join(display, ", ")
+	log.Printf("[wnb] building (%s)", e.buildTrigger)
 
 	p, err := StartProc(e.cfg.Build.Command)
 	if err != nil {
 		log.Printf("[wnb] failed to start build: %v", err)
+		e.reportBuild("could not start: "+err.Error(), nil)
 		return nil
 	}
 	return p
+}
+
+// reportBuild writes the build failure report; build is nil if the command
+// never started.
+func (e *Engine) reportBuild(result string, build *Proc) {
+	writeReport(e.reportDir, buildReportFile, failureReport{
+		what:    "build",
+		command: e.cfg.Build.Command,
+		trigger: e.buildTrigger,
+		result:  result,
+		proc:    build,
+		cleared: "This file is removed when a build succeeds.",
+	})
+}
+
+// reportRun writes the run failure report; run is nil if the command never
+// started.
+func (e *Engine) reportRun(result string, run *Proc) {
+	writeReport(e.reportDir, runReportFile, failureReport{
+		what:    "run",
+		command: e.cfg.Run.Command,
+		result:  result,
+		proc:    run,
+		cleared: fmt.Sprintf("This file is removed once a restarted process stays up for %s.", runHealthyAfter),
+	})
 }
 
 // stopProcs stops every target concurrently and waits for all of them, while
@@ -283,6 +333,9 @@ func (e *Engine) scheduleRetry(failures int) <-chan time.Time {
 // was attempted and failed; an empty run command is a success with no proc.
 func (e *Engine) restartRun(run *Proc) (*Proc, bool) {
 	if e.cfg.Run.Command == "" {
+		// Nothing to run, so nothing can be failing: drop a report a
+		// previous session with a run command left behind.
+		clearReport(e.reportDir, runReportFile)
 		return nil, true
 	}
 	if run != nil {
@@ -298,6 +351,7 @@ func (e *Engine) restartRun(run *Proc) (*Proc, bool) {
 	p, err := StartProc(e.cfg.Run.Command)
 	if err != nil {
 		log.Printf("[wnb] failed to start process: %v", err)
+		e.reportRun("could not start: "+err.Error(), nil)
 		return nil, false
 	}
 	return p, true

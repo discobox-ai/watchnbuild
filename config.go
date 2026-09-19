@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -164,14 +166,22 @@ type Config struct {
 	Retry    RetryConfig `yaml:"retry"`
 }
 
+// FindConfig returns the first of DefaultConfigNames present in the working
+// directory, or "" if there is none.
+func FindConfig() string {
+	for _, name := range DefaultConfigNames {
+		if _, err := os.Stat(name); err == nil {
+			return name
+		}
+	}
+	return ""
+}
+
+// LoadConfig reads the config at path, or the first default config name
+// present when path is empty.
 func LoadConfig(path string) (*Config, error) {
 	if path == "" {
-		for _, name := range DefaultConfigNames {
-			if _, err := os.Stat(name); err == nil {
-				path = name
-				break
-			}
-		}
+		path = FindConfig()
 		if path == "" {
 			return nil, fmt.Errorf("no config file found (looked for %s)", strings.Join(DefaultConfigNames, ", "))
 		}
@@ -185,7 +195,9 @@ func LoadConfig(path string) (*Config, error) {
 	var cfg Config
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))
 	dec.KnownFields(true)
-	if err := dec.Decode(&cfg); err != nil {
+	// A file of nothing but comments (the sample, untouched) is an empty
+	// config, not a parse error.
+	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 
@@ -196,7 +208,24 @@ func LoadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+// Default commands, used when build.command is not set: a Go app in the
+// working directory. The .exe suffix is on every platform because Windows
+// needs it and nothing else minds.
+const (
+	DefaultBuildCommand = "go build -o bin/app.exe ."
+	DefaultRunCommand   = "./bin/app.exe"
+)
+
 func (c *Config) applyDefaults() {
+	// The run default belongs with the build default: after a custom
+	// build, ./bin/app.exe is unlikely to exist, and an unset run command
+	// means watch-and-build only.
+	if strings.TrimSpace(c.Build.Command) == "" {
+		c.Build.Command = DefaultBuildCommand
+		if strings.TrimSpace(c.Run.Command) == "" {
+			c.Run.Command = DefaultRunCommand
+		}
+	}
 	if len(c.Watch.Paths) == 0 {
 		c.Watch.Paths = []string{"."}
 	}
@@ -228,9 +257,6 @@ func (c *Config) applyDefaults() {
 }
 
 func (c *Config) validate() error {
-	if strings.TrimSpace(c.Build.Command) == "" {
-		return fmt.Errorf("build.command is required")
-	}
 	if _, err := ParseSignal(c.Run.StopSignal); err != nil {
 		return fmt.Errorf("run.stop_signal: %w", err)
 	}
@@ -251,6 +277,9 @@ func (c *Config) validate() error {
 // Matches reports whether a change to path (relative to the working
 // directory) should trigger a build.
 func (c *Config) Matches(rel string) bool {
+	if isReportFile(rel) {
+		return false
+	}
 	base := filepath.Base(rel)
 
 	for _, g := range c.Watch.Exclude {
