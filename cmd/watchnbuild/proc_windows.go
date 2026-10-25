@@ -28,7 +28,7 @@ import (
 // least quoting survives.
 func shellCommand(command string) *exec.Cmd {
 	if shell := posixShell(); shell != "" {
-		cmd := exec.Command(shell, "-c", command)
+		cmd := exec.Command(shell, "-c", command) //nolint:noctx // Proc manages graceful shutdown and cancellation of the entire process group.
 		cmd.Env = shellToolsOnPath(os.Environ(), filepath.Dir(shell))
 		return cmd
 	}
@@ -36,7 +36,7 @@ func shellCommand(command string) *exec.Cmd {
 	if shell == "" {
 		shell = "cmd.exe"
 	}
-	cmd := exec.Command(shell)
+	cmd := exec.Command(shell) //nolint:noctx // Proc manages shutdown of the entire process tree.
 	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: syscall.EscapeArg(shell) + " /c " + command}
 	return cmd
 }
@@ -94,14 +94,14 @@ func shellToolsOnPath(env []string, dir string) []string {
 	return out
 }
 
-func setNewProcessGroup(cmd *exec.Cmd) {}
+func setNewProcessGroup(_ *exec.Cmd) {}
 
 // Windows has no signals; like watchexec, every stop is a forceful
 // termination. taskkill /T takes the whole process tree down.
-func (p *Proc) signalGroup(sig os.Signal) { p.killGroup() }
+func (p *Proc) signalGroup(_ os.Signal) { p.killGroup() }
 
 func (p *Proc) killGroup() {
-	_ = exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(p.pgid)).Run()
+	_ = exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(p.pgid)).Run() //nolint:gosec,noctx // Cleanup synchronously kills the tree using only the numeric PID returned by os/exec.
 }
 
 func (p *Proc) groupGone() bool {

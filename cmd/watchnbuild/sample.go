@@ -41,7 +41,7 @@ build:
   ## Run through $SHELL after every change.
   #command: go build -o bin/app.exe .
 
-  ## When cancelling a stale build: stop signal, then SIGKILL after this.
+  ## When canceling a stale build: stop signal, then SIGKILL after this.
   #grace: 2s
 
 run:

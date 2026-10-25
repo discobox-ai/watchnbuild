@@ -29,7 +29,7 @@ func TestBackoffDelay(t *testing.T) {
 }
 
 func TestRetryDelay(t *testing.T) {
-	initial, max := 15*time.Second, 10*time.Minute
+	initial, maximum := 15*time.Second, 10*time.Minute
 	cases := map[int]time.Duration{
 		1:  15 * time.Second,
 		2:  30 * time.Second,
@@ -41,7 +41,7 @@ func TestRetryDelay(t *testing.T) {
 		50: 10 * time.Minute,
 	}
 	for failures, want := range cases {
-		if got := retryDelay(initial, max, failures); got != want {
+		if got := retryDelay(initial, maximum, failures); got != want {
 			t.Errorf("retryDelay(%d) = %v, want %v", failures, got, want)
 		}
 	}
@@ -367,7 +367,7 @@ func TestEngineBacksOffAfterRepeatedCancels(t *testing.T) {
 
 	// Each batch lands while the (fresh) 0.4s build is still running, so
 	// every one is a cancel; the third must trip the backoff warning.
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		time.Sleep(120 * time.Millisecond)
 		batches <- []WatchEvent{{Path: "hot.txt", Op: fsnotify.Write}}
 	}

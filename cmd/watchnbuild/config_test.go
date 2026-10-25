@@ -263,7 +263,7 @@ func TestSampleConfig(t *testing.T) {
 	// Every option line uncommented must be a valid config, so the
 	// sample can't drift from the real field names.
 	var lines []string
-	for _, l := range strings.Split(sampleConfig, "\n") {
+	for l := range strings.SplitSeq(sampleConfig, "\n") {
 		body := strings.TrimLeft(l, " ")
 		if strings.HasPrefix(body, "#") && !strings.HasPrefix(body, "##") {
 			l = l[:len(l)-len(body)] + body[1:]

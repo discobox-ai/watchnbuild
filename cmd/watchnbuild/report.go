@@ -87,7 +87,7 @@ func (r failureReport) String() string {
 func writeReport(dir, name string, r failureReport) {
 	path := filepath.Join(dir, name)
 	tmp := filepath.Join(dir, reportTemp(name))
-	if err := os.WriteFile(tmp, []byte(r.String()), 0o644); err != nil {
+	if err := os.WriteFile(tmp, []byte(r.String()), 0o600); err != nil {
 		log.Printf("[wnb] warning: cannot write %s: %v", path, err)
 		return
 	}

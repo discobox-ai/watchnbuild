@@ -4,7 +4,7 @@ Watch files, run a build command, run the result. A tiny, race-free
 alternative to [air](https://github.com/air-verse/air) that is not specific
 to Go.
 
-`wnb` guarantees three things air doesn't:
+`wnb` guarantees four things air doesn't:
 
 1. **No parallel stale builds.** A file change during a build cancels the
    in-flight build — the entire process group, so the compiler and everything
@@ -41,14 +41,14 @@ for you to edit.
 `wnb` on the same config exits immediately. (The lock belongs to the file,
 not its name: after an editor saves by renaming a new file over the config,
 a newly started `wnb` locks the new one.) That also stops a run command
-that is itself `wnb` — building this repo with the defaults does exactly
+that is itself `wnb` — setting a run command to `watchnbuild` does exactly
 that — from launching itself forever: the nested one fails, and the first
 reports it as a failed run and backs off.
 
 ### As a Go tool dependency
 
 ```
-go get -tool github.com/discobox-ai/watchnbuild
+go get -tool github.com/discobox-ai/watchnbuild/cmd/watchnbuild
 go tool watchnbuild
 ```
 
@@ -228,3 +228,11 @@ On Windows there are no signals: stops are forceful process-tree kills
 ## License
 
 Apache-2.0
+
+## Development
+
+Enter the pinned development environment with `nix develop`, then use
+`go tool task build`, `go tool task dev`, or `go tool task ci`. Build output
+goes into `build/`. The dev loop builds this CLI without launching another
+watcher. See [DESIGN.md](DESIGN.md) for the architecture and
+[AGENTS.md](AGENTS.md) for repository conventions.

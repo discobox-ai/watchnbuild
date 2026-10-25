@@ -1,0 +1,9 @@
+waivers:
+  - rule: env.go-tools
+    path: go.mod
+    reason: >-
+      This is watchnbuild itself. Its local tool directive is
+      github.com/discobox-ai/watchnbuild/cmd/watchnbuild after the standard
+      cmd layout migration; the checker still requires the former root path,
+      which is no longer a Go package. Task, golangci-lint, and repocheck remain
+      pinned alongside the local watchnbuild tool.

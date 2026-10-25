@@ -55,7 +55,7 @@ func NewEngine(cfg *Config, batches <-chan []WatchEvent, signals <-chan os.Signa
 	return &Engine{cfg: cfg, batches: batches, signals: signals, stopSignal: sig, reportDir: workDir}
 }
 
-// Backoff kicks in after this many consecutive builds are cancelled by new
+// Backoff kicks in after this many consecutive builds are canceled by new
 // changes — the signature of a feedback loop (build output inside the
 // watched tree retriggering the watcher).
 const backoffThreshold = 3
@@ -65,7 +65,7 @@ const backoffThreshold = 3
 func (e *Engine) Run() int {
 	var (
 		build, run *Proc
-		// Feedback-loop damping: consecutive cancelled builds, which
+		// Feedback-loop damping: consecutive canceled builds, which
 		// files caused them, and — once past the threshold — a timer
 		// deferring the next build plus the changes queued behind it.
 		cancels int
@@ -107,7 +107,7 @@ func (e *Engine) Run() int {
 					hot = map[string]int{}
 				}
 				countHot(hot, batch)
-				log.Printf("[wnb] change during build (%s), cancelling stale build", triggerSummary(batch))
+				log.Printf("[wnb] change during build (%s), canceling stale build", triggerSummary(batch))
 				e.stopBuild(build)
 				build = nil
 				if e.aborted != nil {
@@ -115,7 +115,7 @@ func (e *Engine) Run() int {
 				}
 				if cancels >= backoffThreshold {
 					delay := backoffDelay(cancels)
-					log.Printf("[wnb] warning: %d consecutive builds cancelled by new changes (%s) — possible feedback loop; if a build output is being watched, add it to exclude/exclude_dirs. Backing off %s", cancels, hotSummary(hot), delay)
+					log.Printf("[wnb] warning: %d consecutive builds canceled by new changes (%s) — possible feedback loop; if a build output is being watched, add it to exclude/exclude_dirs. Backing off %s", cancels, hotSummary(hot), delay)
 					pending = batch
 					backoff = time.After(delay)
 					continue
@@ -385,27 +385,24 @@ func done(p *Proc) <-chan struct{} {
 // retryMarker is the build "reason" logged for an automatic retry.
 const retryMarker = "retry after failure"
 
-// retryDelay doubles from initial per consecutive failure, capped at max.
-func retryDelay(initial, max time.Duration, failures int) time.Duration {
+// retryDelay doubles from initial per consecutive failure, capped at maximum.
+func retryDelay(initial, maximum time.Duration, failures int) time.Duration {
 	d := initial
 	for i := 1; i < failures; i++ {
 		d *= 2
-		if d >= max || d <= 0 { // >= max, or overflowed past it
-			return max
+		if d >= maximum || d <= 0 { // >= maximum, or overflowed past it
+			return maximum
 		}
 	}
-	if d > max {
-		return max
+	if d > maximum {
+		return maximum
 	}
 	return d
 }
 
 // backoffDelay grows exponentially from 1s at the threshold, capped at 8s.
 func backoffDelay(cancels int) time.Duration {
-	shift := cancels - backoffThreshold
-	if shift > 3 {
-		shift = 3
-	}
+	shift := min(cancels-backoffThreshold, 3)
 	return time.Second << shift
 }
 

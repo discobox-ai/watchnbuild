@@ -15,7 +15,7 @@ func shellCommand(command string) *exec.Cmd {
 	if shell == "" {
 		shell = "/bin/sh"
 	}
-	return exec.Command(shell, "-c", command)
+	return exec.Command(shell, "-c", command) //nolint:noctx // Proc manages graceful shutdown and cancellation of the entire process group.
 }
 
 func setNewProcessGroup(cmd *exec.Cmd) {
