@@ -8,3 +8,7 @@
 - Keep command cancellation under Proc’s process-group/tree shutdown logic;
   context cancellation that kills only the shell can strand its descendants.
   Standard lint conformance retains explicit noctx exceptions for this reason.
+
+- Pass native paths to directory-exclusion tests, matching filepath.Rel in
+  the watcher. The first standard Windows CI run failed because
+  TestExcludesDir passed slash paths while configuration paths were cleaned.

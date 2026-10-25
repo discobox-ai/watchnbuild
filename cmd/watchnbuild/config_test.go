@@ -236,7 +236,7 @@ func TestExcludesDir(t *testing.T) {
 		{"pkg", false},
 	}
 	for _, c := range cases {
-		if got := cfg.ExcludesDir(c.path); got != c.want {
+		if got := cfg.ExcludesDir(filepath.FromSlash(c.path)); got != c.want {
 			t.Errorf("ExcludesDir(%q) = %v, want %v", c.path, got, c.want)
 		}
 	}
