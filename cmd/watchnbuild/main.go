@@ -12,9 +12,9 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-)
 
-var version = "dev"
+	"github.com/discobox-ai/watchnbuild/internal/version"
+)
 
 func main() {
 	log.SetFlags(0)
@@ -25,7 +25,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println("watchnbuild", version)
+		fmt.Println("watchnbuild", version.String())
 		return
 	}
 

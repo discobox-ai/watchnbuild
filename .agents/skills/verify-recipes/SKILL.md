@@ -3,9 +3,9 @@ name: verify-recipes
 description: Build and exercise watchnbuild through its CLI with isolated watched files and captured lifecycle logs.
 ---
 
-Build the CLI with `go build -o /tmp/wnb-verify .`. Launch it from a fresh
+Build the CLI with `go build -o /tmp/wnb-verify ./cmd/watchnbuild`. Launch it from a fresh
 `mktemp -d` directory with an explicit `.wnb.yaml`, capturing stdout/stderr
-outside the watched tree. There is no Taskfile or `task dev` in this repo.
+outside the watched tree. The Taskfile provides `go tool task build` and a build-only `go tool task dev` loop.
 
 For trigger diagnostics, configure `watch.extensions: [go]`, a short debounce,
 `build.command: "sleep 0.1"`, and a long-running run command such as `sleep 30`.

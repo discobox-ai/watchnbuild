@@ -1,4 +1,18 @@
-# Build trigger diagnostics
+# watchnbuild design
+
+watchnbuild is a CLI that watches source directories, builds a program, and
+optionally runs the result. Configuration is strict YAML/JSON with documented
+defaults; an advisory lock prevents concurrent loops on the same config file.
+
+The watcher feeds filesystem events to a fixed-window debouncer. One engine
+goroutine owns the build, run, retry, and shutdown state. A new trigger cancels
+an obsolete build; a successful build replaces the running process. Failures
+retain the last working process and schedule retries with capped backoff.
+Commands run in process groups on Unix and process trees on Windows so shutdown
+and cancellation reach descendants. Captured output feeds bounded failure
+reports without blocking process reaping on inherited pipes.
+
+## Build trigger diagnostics
 
 The engine is the single owner of build/run state (see README's Design).
 The watcher sends `WatchEvent` values containing a relative path and the

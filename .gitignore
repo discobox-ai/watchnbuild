@@ -1,3 +1,9 @@
 /watchnbuild
 *.exe
 /bin/
+
+/build/
+.direnv/
+.env
+result
+wnb-*-failed.txt

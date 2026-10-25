@@ -116,7 +116,7 @@ type BuildConfig struct {
 	// still-running build is stopped (whole process group) before a new
 	// one starts.
 	Command string `yaml:"command"`
-	// Grace is how long a cancelled build gets after the stop signal
+	// Grace is how long a canceled build gets after the stop signal
 	// before its process group is SIGKILLed. Default: 2s.
 	Grace Duration `yaml:"grace"`
 }

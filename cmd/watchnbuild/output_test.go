@@ -9,7 +9,7 @@ import (
 func TestOutputTailKeepsLastLines(t *testing.T) {
 	tail := &outputTail{}
 	s := &lineSplitter{tail: tail}
-	for i := 0; i < outputTailLines+5; i++ {
+	for i := range outputTailLines + 5 {
 		fmt.Fprintf(s, "line %d\n", i)
 	}
 	lines, dropped := tail.Snapshot()

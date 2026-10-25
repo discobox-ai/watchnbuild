@@ -81,12 +81,10 @@ func StartProc(command string) (*Proc, error) {
 		dst *os.File
 		r   *os.File
 	}{{os.Stdout, outR}, {os.Stderr, errR}} {
-		copiers.Add(1)
-		go func() {
-			defer copiers.Done()
+		copiers.Go(func() {
 			defer s.r.Close()
 			copyOutput(s.dst, s.r, &lineSplitter{tail: p.output})
-		}()
+		})
 	}
 	go func() {
 		copiers.Wait()
