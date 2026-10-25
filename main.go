@@ -20,6 +20,7 @@ func main() {
 	log.SetFlags(0)
 
 	configPath := flag.String("config", "", "config file (default: first of .wnb.yaml, .wnb.yml, .wnb.json)")
+	verbose := flag.Bool("verbose", false, "log every triggering filesystem path and event")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -62,7 +63,7 @@ func main() {
 	}
 	defer watcher.Close()
 
-	batches := make(chan []string)
+	batches := make(chan []WatchEvent)
 	go batchEvents(watcher.Events, batches, cfg.Debounce.D())
 
 	// Signals bypass the debounce queue (watchexec treats them as urgent):
@@ -70,5 +71,7 @@ func main() {
 	signals := make(chan os.Signal, 2)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 
-	os.Exit(NewEngine(cfg, batches, signals).Run())
+	engine := NewEngine(cfg, batches, signals)
+	engine.verbose = *verbose
+	os.Exit(engine.Run())
 }

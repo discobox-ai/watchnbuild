@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"os"
@@ -10,6 +11,23 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+// WatchEvent retains the observed operation rather than inferring a content
+// change or the process responsible. Zero-op events are internal reasons.
+type WatchEvent struct {
+	Path string
+	Op   fsnotify.Op
+}
+
+func (e WatchEvent) String() string {
+	if e.Op != 0 {
+		return e.Op.String() + " " + fmt.Sprintf("%q", e.Path)
+	}
+	if e.Path == overflowMarker {
+		return "event overflow recovery"
+	}
+	return e.Path
+}
+
 // Watcher recursively watches the configured roots and emits relative paths
 // of files whose changes pass the config filters. Directories are watched
 // (not individual files) so editor atomic saves — write temp, rename over —
@@ -17,7 +35,7 @@ import (
 type Watcher struct {
 	fs     *fsnotify.Watcher
 	cfg    *Config
-	Events chan string
+	Events chan WatchEvent
 }
 
 func NewWatcher(cfg *Config) (*Watcher, error) {
@@ -25,7 +43,7 @@ func NewWatcher(cfg *Config) (*Watcher, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := &Watcher{fs: fsw, cfg: cfg, Events: make(chan string, 256)}
+	w := &Watcher{fs: fsw, cfg: cfg, Events: make(chan WatchEvent, 256)}
 
 	for _, root := range cfg.Watch.Paths {
 		if err := w.addRecursive(root); err != nil {
@@ -79,7 +97,7 @@ func (w *Watcher) run() {
 				// The kernel dropped events; we cannot know what
 				// changed, so trigger a rebuild to be safe.
 				log.Printf("[wnb] watch queue overflowed, forcing rebuild")
-				w.Events <- overflowMarker
+				w.Events <- WatchEvent{Path: overflowMarker}
 				continue
 			}
 			log.Printf("[wnb] watch error: %v", err)
@@ -112,7 +130,7 @@ func (w *Watcher) handle(ev fsnotify.Event) {
 	}
 
 	if w.cfg.Matches(rel) {
-		w.Events <- rel
+		w.Events <- WatchEvent{Path: rel, Op: ev.Op}
 	}
 }
 

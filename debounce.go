@@ -9,7 +9,7 @@ import "time"
 // latency bounded under a steady stream of events.
 //
 // Reads from in until it is closed, then closes out.
-func batchEvents(in <-chan string, out chan<- []string, window time.Duration) {
+func batchEvents(in <-chan WatchEvent, out chan<- []WatchEvent, window time.Duration) {
 	defer close(out)
 	for {
 		first, ok := <-in
@@ -17,8 +17,8 @@ func batchEvents(in <-chan string, out chan<- []string, window time.Duration) {
 			return
 		}
 
-		seen := map[string]bool{first: true}
-		batch := []string{first}
+		seen := map[WatchEvent]bool{first: true}
+		batch := []WatchEvent{first}
 		timer := time.NewTimer(window)
 
 	collect:
