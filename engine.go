@@ -17,7 +17,7 @@ import (
 // flag between stages but had no owner able to cancel work in flight.
 type Engine struct {
 	cfg        *Config
-	batches    <-chan []string
+	batches    <-chan []WatchEvent
 	signals    <-chan os.Signal
 	stopSignal os.Signal
 
@@ -33,6 +33,8 @@ type Engine struct {
 	// its report.
 	reportDir    string
 	buildTrigger string
+	verbose      bool
+	buildSummary string
 }
 
 // stopTarget is one process to stop, with the grace period configured for
@@ -44,7 +46,7 @@ type stopTarget struct {
 	what  string
 }
 
-func NewEngine(cfg *Config, batches <-chan []string, signals <-chan os.Signal) *Engine {
+func NewEngine(cfg *Config, batches <-chan []WatchEvent, signals <-chan os.Signal) *Engine {
 	sig, err := ParseSignal(cfg.Run.StopSignal)
 	if err != nil {
 		// validate() already rejected bad names; this is unreachable.
@@ -69,7 +71,7 @@ func (e *Engine) Run() int {
 		cancels int
 		hot     map[string]int
 		backoff <-chan time.Time
-		pending []string
+		pending []WatchEvent
 		// Failure retry: consecutive failed builds/starts and the timer
 		// that re-runs the pipeline without waiting for a file change.
 		failures int
@@ -79,7 +81,7 @@ func (e *Engine) Run() int {
 		runHealthy <-chan time.Time
 	)
 
-	build = e.startBuild([]string{"startup"})
+	build = e.startBuild([]WatchEvent{{Path: "startup"}})
 	if build == nil {
 		failures++
 		retry = e.scheduleRetry(failures)
@@ -105,7 +107,7 @@ func (e *Engine) Run() int {
 					hot = map[string]int{}
 				}
 				countHot(hot, batch)
-				log.Printf("[wnb] change during build, cancelling stale build")
+				log.Printf("[wnb] change during build (%s), cancelling stale build", triggerSummary(batch))
 				e.stopBuild(build)
 				build = nil
 				if e.aborted != nil {
@@ -136,7 +138,7 @@ func (e *Engine) Run() int {
 
 		case <-retry:
 			retry = nil
-			build = e.startBuild([]string{retryMarker})
+			build = e.startBuild([]WatchEvent{{Path: retryMarker}})
 			if build == nil {
 				failures++
 				retry = e.scheduleRetry(failures)
@@ -148,12 +150,12 @@ func (e *Engine) Run() int {
 			cancels, hot = 0, nil
 			if !finished.Success() {
 				failures++
-				log.Printf("[wnb] build failed (%v)%s", finished.ExitError(), keepNote(run))
+				log.Printf("[wnb] build failed (%v)%s (%s)", finished.ExitError(), keepNote(run), e.buildSummary)
 				e.reportBuild(finished.ExitError().Error(), finished)
 				retry = e.scheduleRetry(failures)
 				continue
 			}
-			log.Printf("[wnb] build succeeded")
+			log.Printf("[wnb] build succeeded (%s)", e.buildSummary)
 			clearReport(e.reportDir, buildReportFile)
 			var ok bool
 			run, ok = e.restartRun(run)
@@ -207,22 +209,22 @@ func (e *Engine) Run() int {
 	}
 }
 
-func (e *Engine) startBuild(reasons []string) *Proc {
-	display := reasons
-	if len(display) > 5 {
-		display = append(append([]string{}, display[:5]...), "...")
-	}
-	for i, r := range display {
-		if r == overflowMarker {
-			display[i] = "(event overflow)"
+func (e *Engine) startBuild(reasons []WatchEvent) *Proc {
+	parts := make([]string, len(reasons))
+	for i, reason := range reasons {
+		parts[i] = reason.String()
+		if e.verbose {
+			log.Printf("[wnb] rebuild triggered: %s", parts[i])
 		}
 	}
-	e.buildTrigger = strings.Join(display, ", ")
-	log.Printf("[wnb] building (%s)", e.buildTrigger)
+	// Reports retain the complete batch even when the terminal summary is short.
+	e.buildTrigger = strings.Join(parts, ", ")
+	e.buildSummary = triggerSummary(reasons)
+	log.Printf("[wnb] building (%s)", triggerSummary(reasons))
 
 	p, err := StartProc(e.cfg.Build.Command)
 	if err != nil {
-		log.Printf("[wnb] failed to start build: %v", err)
+		log.Printf("[wnb] failed to start build: %v (%s)", err, e.buildSummary)
 		e.reportBuild("could not start: "+err.Error(), nil)
 		return nil
 	}
@@ -339,7 +341,7 @@ func (e *Engine) restartRun(run *Proc) (*Proc, bool) {
 		return nil, true
 	}
 	if run != nil {
-		log.Printf("[wnb] stopping process (signal %s, grace %s)", e.cfg.Run.StopSignal, e.cfg.Run.Grace.D())
+		log.Printf("[wnb] stopping process (signal %s, grace %s; %s)", e.cfg.Run.StopSignal, e.cfg.Run.Grace.D(), e.buildSummary)
 		e.stopProcs(false, stopTarget{run, e.cfg.Run.Grace.D(), ""})
 		if e.aborted != nil {
 			// Ctrl-C during the stop: don't start a replacement we
@@ -347,10 +349,10 @@ func (e *Engine) restartRun(run *Proc) (*Proc, bool) {
 			return nil, true
 		}
 	}
-	log.Printf("[wnb] starting process")
+	log.Printf("[wnb] starting process (%s)", e.buildSummary)
 	p, err := StartProc(e.cfg.Run.Command)
 	if err != nil {
-		log.Printf("[wnb] failed to start process: %v", err)
+		log.Printf("[wnb] failed to start process: %v (%s)", err, e.buildSummary)
 		e.reportRun("could not start: "+err.Error(), nil)
 		return nil, false
 	}
@@ -407,8 +409,8 @@ func backoffDelay(cancels int) time.Duration {
 	return time.Second << shift
 }
 
-func mergeBatch(pending, batch []string) []string {
-	seen := make(map[string]bool, len(pending))
+func mergeBatch(pending, batch []WatchEvent) []WatchEvent {
+	seen := make(map[WatchEvent]bool, len(pending))
 	for _, p := range pending {
 		seen[p] = true
 	}
@@ -421,9 +423,11 @@ func mergeBatch(pending, batch []string) []string {
 	return pending
 }
 
-func countHot(hot map[string]int, batch []string) {
+func countHot(hot map[string]int, batch []WatchEvent) {
 	for _, p := range batch {
-		hot[p]++
+		if p.Op != 0 {
+			hot[p.Path]++
+		}
 	}
 }
 
@@ -454,4 +458,17 @@ func keepNote(run *Proc) string {
 		return ", keeping previous process running"
 	}
 	return ""
+}
+
+// triggerSummary bounds terminal noise; verbose output and reports remain complete.
+func triggerSummary(reasons []WatchEvent) string {
+	parts := make([]string, 0, 6)
+	for i, reason := range reasons {
+		if i == 5 {
+			parts = append(parts, fmt.Sprintf("... (+%d events; use -verbose)", len(reasons)-5))
+			break
+		}
+		parts = append(parts, reason.String())
+	}
+	return strings.Join(parts, ", ")
 }

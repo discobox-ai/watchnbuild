@@ -23,7 +23,7 @@ to Go.
 ## Usage
 
 ```
-watchnbuild [-config path]
+watchnbuild [-config path] [-verbose]
 ```
 
 With no `-config`, the first of `.wnb.yaml`, `.wnb.yml`, `.wnb.json` in the
@@ -154,6 +154,22 @@ and programs notice:
   or `stdbuf -oL` in the command;
 - stdout and stderr are separate pipes, so lines from one can appear before
   or after lines from the other in a different order than they were written.
+
+### Diagnosing rebuilds
+
+Build, cancellation, success/failure, and process stop/start messages include
+why that build ran: `startup`, `retry after failure`, `event overflow recovery`,
+or observed events such as `WRITE ".env"`. Paths are quoted so spaces and
+control characters remain unambiguous. These are filesystem observations;
+they do not prove the contents changed or identify which process wrote a file.
+
+Normal lifecycle messages summarize the first five path/event pairs. Run
+`watchnbuild -verbose` to log every pair in each build's batch as
+`[wnb] rebuild triggered: WRITE ".env"`, including events beyond the summary.
+Repeated identical path/operation pairs in a debounce window are deduplicated;
+different operations on the same path are retained in order of first observation.
+Failure reports retain the complete trigger list even without `-verbose`.
+Metadata-only events remain ignored.
 
 ### What triggers a build
 
